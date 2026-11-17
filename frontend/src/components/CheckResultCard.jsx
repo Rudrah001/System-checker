@@ -1,0 +1,1 @@
+export default function CheckResultCard({label,value}){return <article><small>{label}</small><strong>{value === null || value === undefined ? 'Unknown' : Array.isArray(value) ? (value.join(', ')||'None') : String(value)}</strong></article>}
