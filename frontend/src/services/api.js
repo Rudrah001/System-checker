@@ -18,3 +18,4 @@ export async function pairing(id, token) {
   return jsonResponse(response, 'Creating a pairing code');
 }
 export const wsUrl = (path) => base.replace(/^http/, 'ws') + path;
+export const systemCheckerInstallerUrl = () => `${base}/api/download/system-checker`;

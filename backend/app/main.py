@@ -1,8 +1,10 @@
 from __future__ import annotations
 import asyncio, logging, secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from .config import settings
 from .models import NativeResult, PairingResponse, SessionStatus
 from .session_manager import sessions
@@ -10,6 +12,9 @@ from .websocket_manager import websockets
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 log = logging.getLogger('system-check')
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+INSTALLER_PATH = PROJECT_ROOT / 'installer-output' / 'SystemCheckerSetup.exe'
+INSTALLER_FILENAME = 'SystemCheckerSetup.exe'
 app = FastAPI(title='System Check POC')
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +48,18 @@ def snapshot(session):
 async def create_session():
     s = sessions.create(); log.info('session_created id=%s', s.id)
     return {'session_id': s.id, 'frontend_token': s.frontend_token, 'created_at': s.created_at}
+
+@app.get('/api/download/system-checker')
+async def download_system_checker():
+    """Serve the fixed local-POC installer; no client path is accepted."""
+    if not INSTALLER_PATH.is_file():
+        raise HTTPException(status_code=503, detail='System Checker installer is not currently available. Please contact support.')
+    return FileResponse(
+        path=INSTALLER_PATH,
+        media_type='application/vnd.microsoft.portable-executable',
+        filename=INSTALLER_FILENAME,
+        headers={'Cache-Control': 'no-store'},
+    )
 @app.post('/api/sessions/{session_id}/pairing', response_model=PairingResponse)
 async def pairing(session_id: str, token: str):
     s = require_frontend(session_id, token); code, expires = sessions.issue_pairing(s); return PairingResponse(code=code, expires_at=expires)

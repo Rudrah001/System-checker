@@ -20,6 +20,41 @@ npm install
 npm run dev
 ```
 
+### Candidate installer download flow
+
+For this local POC, FastAPI serves the already-built fixed installer at
+`GET /api/download/system-checker`. The React page shows **Download System
+Checker for Windows** before a session is created and after one is created.
+The browser downloads `SystemCheckerSetup.exe`; it never installs or executes
+the file automatically.
+
+Candidate steps:
+
+1. Click **Download System Checker for Windows**.
+2. Open `SystemCheckerSetup.exe` from the browser download list and finish the
+   one-time Windows installation.
+3. Return to the interview page and click **Start System Check**.
+4. Approve the browser external-application prompt if shown.
+
+The browser cannot reliably identify a missing custom-protocol handler. After
+Start System Check, the UI waits 12 seconds for the backend-authenticated native
+WebSocket connection; if it does not appear, it offers a download/install and
+retry explanation. Opening the URL is never treated as a successful connection.
+
+### Browser-only monitor demonstration
+
+The dashboard also includes **Check Monitors in Browser**, independent from the
+native checker. It invokes the browser Window Management API only after the
+candidate clicks it, requests display permission, and reports `PASS` for one
+browser-visible screen, `FAIL` for more than one, or `UNKNOWN` for an
+unsupported API, non-secure context, denied permission, or other error. After a
+successful check, it listens for browser `screenschange` events and refreshes
+the displayed count when available displays change.
+
+Use Chrome or Edge on `localhost` (or HTTPS) for manual testing. Browser
+results can exclude mirrored displays and are not equivalent to native OS-level
+device detection; they never change the native interview policy or its result.
+
 For source-mode testing, use a code obtained from the dashboard:
 
 ```powershell
@@ -70,11 +105,73 @@ administrator access is not required. To remove it:
 powershell -ExecutionPolicy Bypass -File .\installer\unregister_protocol.ps1
 ```
 
-For a normal installer, compile `installer\installer.iss` with Inno Setup:
+### Build the one-time Windows installer
+
+The installer packages the already-built `dist\SystemChecker.exe` and the
+local-POC trusted configuration (`ws://127.0.0.1:8000/ws/native`). It is a
+per-user installer and defaults to `%LOCALAPPDATA%\SystemCheckerPOC`; it does
+not require administrator privileges.
+
+Install Inno Setup, then compile from the project root. This workstation uses
+Inno Setup 7; substitute the versioned installation directory if yours differs:
 
 ```powershell
-ISCC .\installer\installer.iss
+& 'C:\Program Files\Inno Setup 7\ISCC.exe' .\installer\installer.iss
+Test-Path .\installer-output\SystemCheckerSetup.exe
 ```
+
+The output is `installer-output\SystemCheckerSetup.exe`. Before the installer
+replaces an existing `systemchecker://` handler, it displays that handler and
+asks for confirmation. It installs this protocol command:
+
+```text
+"%LOCALAPPDATA%\SystemCheckerPOC\SystemChecker.exe" "%1"
+```
+
+The installer removes the entire protocol key during uninstall only if that
+command still points to its own installed EXE. If another application later
+owns the protocol, the installer leaves the other registration untouched.
+
+### Install, verify, and recover
+
+1. Run `installer-output\SystemCheckerSetup.exe` as the current user and
+   accept the existing-handler replacement prompt only if expected.
+2. Confirm the installed files and association:
+
+   ```powershell
+   Test-Path "$env:LOCALAPPDATA\SystemCheckerPOC\SystemChecker.exe"
+   reg query "HKCU\Software\Classes\systemchecker\shell\open\command"
+   ```
+
+3. Start FastAPI/Vite, create a demo session, click **Start System Check**, and
+   approve the browser prompt. Verify `CONNECTED`, a live result, then close
+   the EXE and verify `DISCONNECTED`. Retry launch to test a fresh pairing code.
+4. Uninstall from Windows **Installed apps** / the generated uninstaller. Verify
+   the installed EXE is removed, the protocol key is removed only when owned by
+   this installer, and `dist\SystemChecker.exe` remains untouched.
+
+The development association recorded before installer testing points to:
+
+```text
+"C:\Projects\system-check-poc\dist\SystemChecker.exe" "%1"
+```
+
+To restore it after uninstall or a failed install, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\register_protocol.ps1
+reg query "HKCU\Software\Classes\systemchecker\shell\open\command"
+```
+
+If the protocol currently belongs to a different handler, the development
+registration script refuses to replace it without explicit acknowledgement:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installer\register_protocol.ps1 -Force
+```
+
+`unregister_protocol.ps1` also removes only the development registration when
+its command matches the expected `dist` EXE; it preserves another handler.
 
 For an external deployment, create `config.local.json` next to the installed
 EXE with a trusted exact endpoint, for example
@@ -123,6 +220,18 @@ signing.
 
 All supplied source files and both archive manifests were inspected without executing the bundled EXE/BAT. `system_check 1.py` and `system_check_poster_mongo 1.py` have the broadest detection coverage (monitors, keyboards, mice, VM, RDP, and remote tools); the EXE reference only checks RDP/VM. Reference versions use HTTP POST, pass arbitrary interview IDs, employ `shell=True`, and commonly turn command errors into `False`/zero, which can create incorrect `PASS` results. This POC keeps the monitoring scope only, reports failures as `UNKNOWN`, and uses pairing credentials instead of a supplied interview ID. Counts are device-instance heuristics: Windows does not reliably map friendly keyboard names to distinct physical keyboards, and VM matching is heuristic.
 
+## Production limitation
+
+`SystemCheckerSetup.exe` in this repository targets a loopback development
+backend and is not suitable for remote candidates. A real deployment needs a
+remotely reachable WSS endpoint deployed in trusted configuration, code signing,
+credential lifecycle controls, and a production security review.
+
+The local download endpoint is intentionally unauthenticated for this POC and
+serves one fixed local file only. A production installer distribution should use
+authenticated application access or trusted static hosting/CDN with release
+integrity controls; it must not expose arbitrary filesystem downloads.
+
 ## Validation scope
 
 Automated tests cover pairing single-use/expiration, session-ID rejection,
@@ -131,6 +240,6 @@ and safe unknown outcomes. This POC was also built with PyInstaller, registered
 under HKCU, and launched through the registered protocol against the local
 backend; the resulting live Windows scan and disconnect state were observed.
 Browser-specific external-application confirmation, React click-to-browser
-protocol invocation, Inno Setup compilation, and any hardware policy scenario
-other than the local scan still require manual verification in the target browser
-and installation environment.
+protocol invocation, Inno Setup compilation/installer UI/uninstaller, and any
+hardware policy scenario other than the local scan still require manual
+verification in the target browser and installation environment.
